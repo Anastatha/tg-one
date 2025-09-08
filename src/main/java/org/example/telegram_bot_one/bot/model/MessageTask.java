@@ -8,40 +8,40 @@ import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MessageTask {
+    // Максимальное количество попыток повторной отправки, если задача не удалась
     public static final int MAX_ATTEMPTS = 5;
 
     public Long chatId;
     public String text;
     public String photoUrl;
     public MessageType type;
+
+    // Счётчик попыток отправки (используется для backoff-логики при ошибках)
     public AtomicInteger attempts = new AtomicInteger(0);
-    public Instant nextRetryTime = Instant.EPOCH; // когда можно отправлять задачу
+    // Время, когда задача может быть отправлена повторно (для задержек)
+    public Instant nextRetryTime = Instant.EPOCH;
+
     public InlineKeyboardMarkup replyMarkup;
     public ReplyKeyboardMarkup replyKeyboardMarkup;
 
-    public MessageTask() {
+    private MessageTask() {}
 
+    public static Builder builder() {
+        return new Builder();
     }
 
-    public MessageTask(Long chatId, String text, String photoUrl, MessageType type) {
-        this.chatId = chatId;
-        this.text = text;
-        this.photoUrl = photoUrl;
-        this.type = type;
-    }
+    public static class Builder {
+        private final MessageTask task = new MessageTask();
 
-    public MessageTask(Long chatId, String text, InlineKeyboardMarkup replyMarkup) {
-        this.chatId = chatId;
-        this.text = text;
-        this.type = MessageType.TEXT;
-        ;
-        this.replyMarkup = replyMarkup;
-    }
-
-    public MessageTask(Long chatId, String text, ReplyKeyboardMarkup replyKeyboardMarkup) {
-        this.chatId = chatId;
-        this.text = text;
-        this.type = MessageType.TEXT;
-        this.replyKeyboardMarkup = replyKeyboardMarkup;
+        public Builder chatId(Long chatId) { task.chatId = chatId; return this; }
+        public Builder text(String text) { task.text = text; return this; }
+        public Builder photoUrl(String url) { task.photoUrl = url; task.type = MessageType.PHOTO; return this; }
+        public Builder type(MessageType type) { task.type = type; return this; }
+        public Builder replyMarkup(InlineKeyboardMarkup markup) { task.replyMarkup = markup; return this; }
+        public Builder replyKeyboardMarkup(ReplyKeyboardMarkup markup) { task.replyKeyboardMarkup = markup; return this; }
+        public MessageTask build() {
+            if (task.type == null) task.type = task.photoUrl != null ? MessageType.PHOTO : MessageType.TEXT;
+            return task;
+        }
     }
 }
