@@ -31,6 +31,17 @@ dependencies {
     annotationProcessor 'org.projectlombok:lombok'
 
     developmentOnly 'org.springframework.boot:spring-boot-devtools'
+
+    implementation 'org.springframework.boot:spring-boot-starter-data-redis'
+    // Jackson (для сериализации задач в Redis)
+    implementation 'com.fasterxml.jackson.core:jackson-databind'
+    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.19.2'
+
+    // Scheduling (@Scheduled)
+    implementation 'org.springframework.boot:spring-boot-starter'
+
+    // RateLimiter
+    implementation 'com.google.guava:guava:33.2.1-jre'
 }
 
 tasks.named('test') {

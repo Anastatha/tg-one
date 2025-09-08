@@ -1,4 +1,4 @@
-package org.example.telegram_bot_one.bot;
+package org.example.telegram_bot_one.bot.enums;
 
 public enum BotCommand {
     START("/start"),
