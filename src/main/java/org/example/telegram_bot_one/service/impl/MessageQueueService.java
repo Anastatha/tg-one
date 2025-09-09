@@ -22,7 +22,7 @@ public class MessageQueueService {
     private final RateLimiter globalRateLimiter = RateLimiter.create(30.0);
 
     // Время, когда в чат можно отправлять следующее сообщение(чтобы не спамить в 1 чат чаще, чем раз в секунду)
-    private final Map<Long, Instant> chatNextAvailableTime = new ConcurrentHashMap<>();
+    private final Map<Long, RateLimiter> chatRateLimiters = new ConcurrentHashMap<>();
 
     public MessageQueueService(IQueueService<MessageTask> queue, IMessageSender messageSender) {
         this.queue = queue;
@@ -36,10 +36,10 @@ public class MessageQueueService {
     // Каждые 5 раз в секунду запускается обработка очереди
     @Scheduled(fixedRate = 200)
     public void processQueue() {
+        globalRateLimiter.acquire();
+
         MessageTask task = queue.pop();
         if (task == null) return;
-
-        Instant now = Instant.now();
 
         // Если у задачи ещё не наступило время следующей попытки (nextRetryTime) — вернем её в очередь
         if (task.nextRetryTime.isAfter(Instant.now())) {
@@ -47,24 +47,18 @@ public class MessageQueueService {
             return;
         }
 
-        // Если чат занят — отложим
-        Instant chatAvailable = chatNextAvailableTime.getOrDefault(task.chatId, Instant.EPOCH);
-        if (chatAvailable.isAfter(now)) {
-            queue.push(task);
-            return;
-        }
-
-        processTask(task, now);
+        processTask(task);
     }
 
-    private void processTask(MessageTask task, Instant now) {
+    private void processTask(MessageTask task) {
         try {
-            globalRateLimiter.acquire();
+            RateLimiter chatLimiter = chatRateLimiters.computeIfAbsent(
+                    task.chatId,
+                    chatId -> RateLimiter.create(1.0) // лимитер со скоростью
+            );
+            chatLimiter.acquire();
 
             boolean success = messageSender.sendTask(task);
-            // обновляем время следующей доступной отправки для чата
-            chatNextAvailableTime.put(task.chatId, now.plusSeconds(1));
-
             // Если не удалось отправить и не превышен лимит попыток — вернём задачу в очередь
             if (!success && task.attempts.get() < MessageTask.MAX_ATTEMPTS) {
                 requeueWithBackoff(task);
