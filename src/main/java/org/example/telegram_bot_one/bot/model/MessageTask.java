@@ -16,7 +16,7 @@ public class MessageTask {
     public String photoUrl;
     public MessageType type;
 
-    // Счётчик попыток отправки (используется для backoff-логики при ошибках)
+    // Счётчик попыток отправки
     public AtomicInteger attempts = new AtomicInteger(0);
     // Время, когда задача может быть отправлена повторно (для задержек)
     public Instant nextRetryTime = Instant.EPOCH;

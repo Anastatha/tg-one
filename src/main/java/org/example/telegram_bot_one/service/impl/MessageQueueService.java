@@ -7,6 +7,7 @@ import org.example.telegram_bot_one.service.IMessageSender;
 import org.example.telegram_bot_one.service.IQueueService;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+
 import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,8 +20,9 @@ public class MessageQueueService {
 
     //30 сообщений в секунду
     private final RateLimiter globalRateLimiter = RateLimiter.create(30.0);
-    //Сохраняет время последнего сообщения для каждого чата (чтобы не спамить в 1 чат чаще, чем раз в секунду)
-    private final Map<Long, Instant> chatLastMessageTime = new ConcurrentHashMap<>();
+
+    // Время, когда в чат можно отправлять следующее сообщение(чтобы не спамить в 1 чат чаще, чем раз в секунду)
+    private final Map<Long, Instant> chatNextAvailableTime = new ConcurrentHashMap<>();
 
     public MessageQueueService(IQueueService<MessageTask> queue, IMessageSender messageSender) {
         this.queue = queue;
@@ -37,21 +39,32 @@ public class MessageQueueService {
         MessageTask task = queue.pop();
         if (task == null) return;
 
+        Instant now = Instant.now();
+
         // Если у задачи ещё не наступило время следующей попытки (nextRetryTime) — вернем её в очередь
         if (task.nextRetryTime.isAfter(Instant.now())) {
             queue.push(task);
             return;
         }
 
-        processTask(task);
+        // Если чат занят — отложим
+        Instant chatAvailable = chatNextAvailableTime.getOrDefault(task.chatId, Instant.EPOCH);
+        if (chatAvailable.isAfter(now)) {
+            queue.push(task);
+            return;
+        }
+
+        processTask(task, now);
     }
 
-    private void processTask(MessageTask task) {
+    private void processTask(MessageTask task, Instant now) {
         try {
-            globalRateLimiter.acquire(); // Guava контролирует максимальное количество сообщений в секунду.
-            applyChatRateLimit(task.chatId); // проверяем, можно ли писать в конкретный чат
+            globalRateLimiter.acquire();
 
             boolean success = messageSender.sendTask(task);
+            // обновляем время следующей доступной отправки для чата
+            chatNextAvailableTime.put(task.chatId, now.plusSeconds(1));
+
             // Если не удалось отправить и не превышен лимит попыток — вернём задачу в очередь
             if (!success && task.attempts.get() < MessageTask.MAX_ATTEMPTS) {
                 requeueWithBackoff(task);
@@ -62,15 +75,6 @@ public class MessageQueueService {
                 requeueWithBackoff(task);
             }
         }
-    }
-
-    private void applyChatRateLimit(Long chatId) throws InterruptedException {
-        Instant last = chatLastMessageTime.get(chatId);
-        if (last != null) {
-            long diff = Instant.now().toEpochMilli() - last.toEpochMilli();
-            if (diff < 1000) Thread.sleep(1000 - diff);
-        }
-        chatLastMessageTime.put(chatId, Instant.now());// обновляем время последней отправки
     }
 
     // Если задача не удалась — увеличиваем счётчик попыток и ставим время повторной отправки
