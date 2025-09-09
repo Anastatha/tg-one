@@ -13,6 +13,9 @@ import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
 import java.net.URL;
+import java.time.Instant;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 @Slf4j
 @Service
@@ -80,17 +83,20 @@ public class TelegramMessageSender implements IMessageSender {
 
     private void handleRateLimit(TelegramApiRequestException e, MessageTask task) {
         String response = e.getApiResponse();
-        int retrySeconds = 5;
+
         if (response != null && response.contains("429")) {
+            int retrySeconds = 5;
             try {
-                retrySeconds = Integer.parseInt(response.replaceAll("[^0-9]", ""));
-            } catch (Exception ignored) {
-            }
+                // Ищем "retry after <число>" или "FLOOD_WAIT_<число>"
+                Matcher m = Pattern.compile("(retry after|FLOOD_WAIT_)\\s*(\\d+)").matcher(response);
+                if (m.find()) {
+                    retrySeconds = Integer.parseInt(m.group(2));
+                }
+            } catch (Exception ignored) {}
             log.info("Rate limited for chatId={}, retry after {}s", task.chatId, retrySeconds);
-            task.nextRetryTime = java.time.Instant.now().plusSeconds(retrySeconds);
+            task.nextRetryTime = Instant.now().plusSeconds(retrySeconds);
         } else {
             log.error("Telegram API error for chatId={}: {}", task.chatId, e.getMessage(), e);
         }
     }
-
 }

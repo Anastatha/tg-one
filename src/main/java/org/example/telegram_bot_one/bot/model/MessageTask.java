@@ -8,9 +8,7 @@ import java.time.Instant;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public class MessageTask {
-    // Максимальное количество попыток повторной отправки, если задача не удалась
     public static final int MAX_ATTEMPTS = 5;
-
     public Long chatId;
     public String text;
     public String photoUrl;
@@ -18,7 +16,7 @@ public class MessageTask {
 
     // Счётчик попыток отправки
     public AtomicInteger attempts = new AtomicInteger(0);
-    // Время, когда задача может быть отправлена повторно (для задержек)
+    // Время, когда задача может быть отправлена повторно 
     public Instant nextRetryTime = Instant.EPOCH;
 
     public InlineKeyboardMarkup replyMarkup;
