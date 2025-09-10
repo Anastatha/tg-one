@@ -4,20 +4,11 @@ import org.telegram.telegrambots.meta.api.objects.replykeyboard.InlineKeyboardMa
 import org.telegram.telegrambots.meta.api.objects.replykeyboard.ReplyKeyboardMarkup;
 import org.example.telegram_bot_one.bot.enums.MessageType;
 
-import java.time.Instant;
-import java.util.concurrent.atomic.AtomicInteger;
-
 public class MessageTask {
-    public static final int MAX_ATTEMPTS = 5;
     public Long chatId;
     public String text;
     public String photoUrl;
     public MessageType type;
-
-    // Счётчик попыток отправки
-    public AtomicInteger attempts = new AtomicInteger(0);
-    // Время, когда задача может быть отправлена повторно 
-    public Instant nextRetryTime = Instant.EPOCH;
 
     public InlineKeyboardMarkup replyMarkup;
     public ReplyKeyboardMarkup replyKeyboardMarkup;

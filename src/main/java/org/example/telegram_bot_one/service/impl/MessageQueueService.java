@@ -8,7 +8,6 @@ import org.example.telegram_bot_one.service.IQueueService;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
-import java.time.Instant;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -17,6 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class MessageQueueService {
     private final IQueueService<MessageTask> queue;
     private final IMessageSender messageSender;
+    private final FloodBlockService floodBlockService;
 
     //30 сообщений в секунду
     private final RateLimiter globalRateLimiter = RateLimiter.create(30.0);
@@ -24,9 +24,10 @@ public class MessageQueueService {
     // Время, когда в чат можно отправлять следующее сообщение(чтобы не спамить в 1 чат чаще, чем раз в секунду)
     private final Map<Long, RateLimiter> chatRateLimiters = new ConcurrentHashMap<>();
 
-    public MessageQueueService(IQueueService<MessageTask> queue, IMessageSender messageSender) {
+    public MessageQueueService(IQueueService<MessageTask> queue, IMessageSender messageSender, FloodBlockService floodBlockService) {
         this.queue = queue;
         this.messageSender = messageSender;
+        this.floodBlockService = floodBlockService;
     }
 
     public void addMessage(MessageTask task) {
@@ -36,16 +37,13 @@ public class MessageQueueService {
     // Каждые 5 раз в секунду запускается обработка очереди
     @Scheduled(fixedRate = 200)
     public void processQueue() {
+        if (floodBlockService.isBlocked()) {
+            return;
+        }
         globalRateLimiter.acquire();
 
         MessageTask task = queue.pop();
         if (task == null) return;
-
-        // Если у задачи ещё не наступило время следующей попытки (nextRetryTime) — вернем её в очередь
-        if (task.nextRetryTime.isAfter(Instant.now())) {
-            queue.push(task);
-            return;
-        }
 
         processTask(task);
     }
@@ -54,118 +52,18 @@ public class MessageQueueService {
         try {
             RateLimiter chatLimiter = chatRateLimiters.computeIfAbsent(
                     task.chatId,
-                    chatId -> RateLimiter.create(1.0) // лимитер со скоростью
+                    chatId -> RateLimiter.create(1.0)
             );
             chatLimiter.acquire();
 
             boolean success = messageSender.sendTask(task);
-            // Если не удалось отправить и не превышен лимит попыток — вернём задачу в очередь
-            if (!success && task.attempts.get() < MessageTask.MAX_ATTEMPTS) {
-                requeueWithBackoff(task);
+
+            if (!success) {
+                queue.pushFirst(task);
             }
         } catch (Exception e) {
             log.error("Task failed for chatId={}", task.chatId, e);
-            if (task.attempts.get() < MessageTask.MAX_ATTEMPTS) {
-                requeueWithBackoff(task);
-            }
+            queue.pushFirst(task);
         }
-    }
-
-    // Если задача не удалась — увеличиваем счётчик попыток и ставим время повторной отправки
-    private void requeueWithBackoff(MessageTask task) {
-        task.attempts.incrementAndGet();
-
-        // Если nextRetryTime уже позже текущего времени + backoff, оставим его
-        Instant backoffTime = Instant.now().plusSeconds((long) Math.pow(2, task.attempts.get()));
-        if (task.nextRetryTime == null || backoffTime.isAfter(task.nextRetryTime)) {
-            task.nextRetryTime = backoffTime;
-        }
-
-        queue.push(task);
     }
 }
-
-//
-//package org.example.telegram_bot_one.service.impl;
-//
-//import com.google.common.util.concurrent.RateLimiter;
-//import lombok.extern.slf4j.Slf4j;
-//import org.example.telegram_bot_one.bot.model.MessageTask;
-//import org.example.telegram_bot_one.service.IMessageSender;
-//import org.example.telegram_bot_one.service.IQueueService;
-//import org.springframework.scheduling.annotation.Scheduled;
-//import org.springframework.stereotype.Service;
-//
-//import java.time.Instant;
-//import java.util.Map;
-//import java.util.concurrent.ConcurrentHashMap;
-//
-//@Slf4j
-//@Service
-//public class MessageQueueService {
-//
-//    private final IQueueService<MessageTask> queue;
-//    private final IMessageSender messageSender;
-//
-//    // глобальный лимит 30 сообщений в секунду
-//    private final RateLimiter globalRateLimiter = RateLimiter.create(30.0);
-//
-//    // лимитер для каждого чата (1 сообщение в секунду)
-//    private final Map<Long, RateLimiter> chatRateLimiters = new ConcurrentHashMap<>();
-//
-//    public MessageQueueService(IQueueService<MessageTask> queue, IMessageSender messageSender) {
-//        this.queue = queue;
-//        this.messageSender = messageSender;
-//    }
-//
-//    public void addMessage(MessageTask task) {
-//        queue.push(task);
-//    }
-//
-//    @Scheduled(fixedRate = 200)
-//    public void processQueue() {
-//        globalRateLimiter.acquire();
-//
-//        MessageTask task = queue.pop();
-//        if (task == null) return;
-//
-//        if (task.nextRetryTime != null && task.nextRetryTime.isAfter(Instant.now())) {
-//            queue.push(task); // не пришло время — оставляем в очереди
-//            return;
-//        }
-//
-//        processTask(task);
-//    }
-//
-//    private void processTask(MessageTask task) {
-//        try {
-//            RateLimiter chatLimiter = chatRateLimiters.computeIfAbsent(
-//                    task.chatId,
-//                    chatId -> RateLimiter.create(1.0)
-//            );
-//            chatLimiter.acquire();
-//
-//            boolean success = messageSender.sendTask(task);
-//
-//            if (!success && task.attempts.get() < MessageTask.MAX_ATTEMPTS) {
-//                requeueWithBackoff(task);
-//            }
-//        } catch (Exception e) {
-//            log.error("Task failed for chatId={}", task.chatId, e);
-//            if (task.attempts.get() < MessageTask.MAX_ATTEMPTS) {
-//                requeueWithBackoff(task);
-//            }
-//        }
-//    }
-//
-//    private void requeueWithBackoff(MessageTask task) {
-//        task.attempts.incrementAndGet();
-//        Instant backoffTime = Instant.now().plusSeconds((long) Math.pow(2, task.attempts.get()));
-//        if (task.nextRetryTime == null || backoffTime.isAfter(task.nextRetryTime)) {
-//            task.nextRetryTime = backoffTime;
-//        }
-//
-//        queue.push(task); // ZSET учтет nextRetryTime + counter
-//    }
-//}
-//

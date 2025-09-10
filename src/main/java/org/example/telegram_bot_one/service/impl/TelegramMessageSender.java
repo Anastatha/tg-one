@@ -13,7 +13,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
 import java.net.URL;
-import java.time.Instant;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -22,9 +21,12 @@ import java.util.regex.Pattern;
 public class TelegramMessageSender implements IMessageSender {
 
     private final TelegramClient telegramClient;
+    private final FloodBlockService floodBlockService;
 
-    public TelegramMessageSender(TelegramClient telegramClient) {
+    public TelegramMessageSender(TelegramClient telegramClient,
+                                 FloodBlockService floodBlockService) {
         this.telegramClient = telegramClient;
+        this.floodBlockService = floodBlockService;
     }
 
     @Override
@@ -85,18 +87,22 @@ public class TelegramMessageSender implements IMessageSender {
         String response = e.getApiResponse();
 
         if (response != null && response.contains("429")) {
-            int retrySeconds = 5;
+            int retrySeconds = 0;
             try {
-                // Ищем "retry after <число>" или "FLOOD_WAIT_<число>"
                 Matcher m = Pattern.compile("(retry after|FLOOD_WAIT_)\\s*(\\d+)").matcher(response);
                 if (m.find()) {
                     retrySeconds = Integer.parseInt(m.group(2));
                 }
-            } catch (Exception ignored) {}
-            log.info("Rate limited for chatId={}, retry after {}s", task.chatId, retrySeconds);
-            task.nextRetryTime = Instant.now().plusSeconds(retrySeconds);
+            } catch (Exception ignored) {
+            }
+
+            log.warn("Telegram global FLOOD_WAIT={}s, pausing bot", retrySeconds);
+
+            // Сообщаем сервису, что бот в блоке
+            floodBlockService.blockGlobally(retrySeconds);
         } else {
             log.error("Telegram API error for chatId={}: {}", task.chatId, e.getMessage(), e);
         }
     }
+
 }
